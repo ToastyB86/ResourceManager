@@ -9,7 +9,7 @@ import psycopg2 as psy
 from psycopg2 import sql
 from fastapi import Query
 
-db_connect_info = ["postgres","postgres","localhost","1223","5432"]
+db_connect_info = ["Resource Manager","postgres","localhost","1223","5432"]
 # Note the index of db_connect_info. From 0 -> 4
 # database="postgres"
 # user="postgres"
@@ -234,7 +234,7 @@ def get_all_employees(db=Depends(get_db)):
     raise HTTPException(status_code=500, detail=f"Error reading employees: {str(e)}")
 
 # READ/SEARCH ONE --------------------------
-@app.get("/employees/search", response_model=List[EmployeeRead])
+@app.get("/employees/search", response_model=List[dict])
 def search_employees(
     firstname: Optional[str] = Query(None),
     lastname: Optional[str] = Query(None),
@@ -243,26 +243,57 @@ def search_employees(
     try:
         cur = db.cursor()
 
-        # Build dynamic query
-        query = """SELECT id, firstname, lastname FROM employee WHERE TRUE"""
-        params = []
+        query = """
+        SELECT 
+            e.id, e.firstname, e.lastname,
+            p.id AS project_id, p.name AS project_name,
+            z.id AS zone_id, z.name AS zone_name,
+            s.id AS station_id, s.name AS station_name,
+            h.phase, h.hours_worked, h.date
+        FROM employee e
+        LEFT JOIN employee_project_zone epz ON e.id = epz.employee_id
+        LEFT JOIN projects p ON epz.project_id = p.id
+        LEFT JOIN zones z ON epz.zone_id = z.id
+        LEFT JOIN stations s ON epz.station_id = s.id
+        LEFT JOIN hours_logged h ON epz.id = h.employee_project_zone_id
+        WHERE TRUE
+        """
 
+        params = []
         if firstname:
-            query += " AND LOWER(firstname) = LOWER(%s)"
+            query += " AND LOWER(e.firstname) = LOWER(%s)"
             params.append(firstname)
         if lastname:
-            query += " AND LOWER(lastname) = LOWER(%s)"
+            query += " AND LOWER(e.lastname) = LOWER(%s)"
             params.append(lastname)
 
         cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close()
 
-        employees = [
-            {"id": row[0], "firstname": row[1], "lastname": row[2]}
-            for row in rows
-        ]
-        return employees
+        # Group by employee
+        employees = {}
+        for row in rows:
+            emp_id = row[0]
+            if emp_id not in employees:
+                employees[emp_id] = {
+                    "id": emp_id,
+                    "firstname": row[1],
+                    "lastname": row[2],
+                    "assignments": []
+                }
+
+            assignment = {
+                "project": {"id": row[3], "name": row[4]},
+                "zone": {"id": row[5], "name": row[6]},
+                "station": {"id": row[7], "name": row[8]},
+                "phase": row[9],
+                "hours_worked": row[10],
+                "date": row[11]
+            }
+            employees[emp_id]["assignments"].append(assignment)
+
+        return list(employees.values())
 
     except Exception as e:
         db.rollback()
@@ -272,59 +303,237 @@ def search_employees(
 # UPDATE ----------------------------
 @app.put("/employees/{employee_id}", response_model=EmployeeRead)
 def update_employee(employee_id: int, employee: EmployeeUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields = []
+        values = []
+
+        if employee.firstname:
+            fields.append("firstname = %s")
+            values.append(employee.firstname)
+        if employee.lastname:
+            fields.append("lastname = %s")
+            values.append(employee.lastname)
+
+        if not fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+
+        values.append(employee_id)
+        query = f"UPDATE employee SET {', '.join(fields)} WHERE id = %s RETURNING id, firstname, lastname"
+        cur.execute(query, tuple(values))
+        updated = cur.fetchone()
+        db.commit()
+        cur.close()
+
+        if not updated:
+            raise HTTPException(status_code=404, detail="Employee not found.")
+
+        return {"id": updated[0], "firstname": updated[1], "lastname": updated[2]}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating employee: {str(e)}")
 
 
 #DELETE -----------------------------
 @app.delete("/employees/{employee_id}")
 def delete_employee(employee_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("DELETE FROM employee WHERE id = %s RETURNING id", (employee_id,))
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
+
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Employee not found.")
+        return {"message": f"Employee {employee_id} deleted successfully."}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting employee: {str(e)}")
 # ZONES ENDPOINTS _______________________________________
 
 
 
 @app.post("/zones", response_model=ZoneRead)
 def create_zone(zone: ZoneCreate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "INSERT INTO zones (name, description) VALUES (%s, %s) RETURNING id, name, description",
+            (zone.name, zone.description)
+        )
+        new_zone = cur.fetchone()
+        db.commit()
+        cur.close()
+        return {"id": new_zone[0], "name": new_zone[1], "description": new_zone[2]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating zone: {str(e)}")
+
 
 @app.get("/zones", response_model=List[ZoneRead])
 def get_all_zones(db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT id, name, description FROM zones")
+        rows = cur.fetchall()
+        cur.close()
+        return [{"id": r[0], "name": r[1], "description": r[2]} for r in rows]
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching zones: {str(e)}")
 
 @app.get("/zones/{zone_id}", response_model=ZoneRead)
 def get_zone(zone_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT id, name, description FROM zones WHERE id = %s", (zone_id,))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Zone not found.")
+        return {"id": row[0], "name": row[1], "description": row[2]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching zone: {str(e)}")
 
 @app.put("/zones/{zone_id}", response_model=ZoneRead)
 def update_zone(zone_id: int, zone: ZoneUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields = []
+        values = []
+
+        if zone.name:
+            fields.append("name = %s")
+            values.append(zone.name)
+        if zone.description:
+            fields.append("description = %s")
+            values.append(zone.description)
+
+        if not fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+
+        values.append(zone_id)
+        query = f"UPDATE zones SET {', '.join(fields)} WHERE id = %s RETURNING id, name, description"
+        cur.execute(query, tuple(values))
+        updated = cur.fetchone()
+        db.commit()
+        cur.close()
+
+        if not updated:
+            raise HTTPException(status_code=404, detail="Zone not found.")
+
+        return {"id": updated[0], "name": updated[1], "description": updated[2]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating zone: {str(e)}")
+
 
 @app.delete("/zones/{zone_id}")
 def delete_zone(zone_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("DELETE FROM zones WHERE id = %s RETURNING id", (zone_id,))
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
+
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Zone not found.")
+        return {"message": f"Zone {zone_id} deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting zone: {str(e)}")
+
 
 # PROJECTS ENDPOINTS _____________________________________
 
 @app.post("/projects", response_model=ProjectRead)
 def create_project(project: ProjectCreate, db=Depends(get_db)):
-    ...
-
+    try:
+        cur = db.cursor()
+        cur.execute("""INSERT INTO projects (name, description) VALUES (%s,%s) RETURNING id, name, description""",(project.name, project.description))
+        new_project = cur.fetchone()
+        db.commit()
+        cur.close()
+        return {"id": new_project[0], "name": new_project[1], "description": new_project[2]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500,detail=f"Error creating project: {str(e)}")
+    
 @app.get("/projects", response_model=List[ProjectRead])
 def get_all_projects(db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("""SELECT id, name, description FROM projects""")
+        rows = cur.fetchall()
+        cur.close()
+        return[{"id":r[0],"name":r[1],"description":r[2]}for r in rows]
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500,detail=f"Error fetching projects: {str(e)}")
 
 @app.get("/projects/{project_id}", response_model=ProjectRead)
 def get_project(project_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("""SELECT id, name, description FROM projects WHERE id = %s""",(project_id))
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return{"id":row[0],"name":row[1],"description":row[2]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500,detail=f"Error fetching project: {str(e)}")
 
 @app.put("/projects/{project_id}", response_model=ProjectRead)
 def update_project(project_id: int, project: ProjectUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields = []
+        values = []
+        if project.name:
+            fields.append("name = %s")
+            values.append(project.name)
+        if project.description:
+            fields.append("description=%s")
+            values.append(project.description)
+
+        if not fields:
+            raise HTTPException(status_code=400,detail="No fields to update.")
+        values.append(project_id)
+        query = f"""UPDATE projects SET {', '.join(fields)} WHERE id = %s RETURNING id, name, description"""
+        cur.execute(query, tuple(values))
+        updated = cur.fetchone()
+        db.commit()
+        db.close()
+        
+        if not updated:
+            raise HTTPException(status_code=404, detail="Project not found.")
+        return{"id": updated[0], "name": updated[1], "description": updated[2]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500,detail=f"Error updating project: {str(e)}")
 
 @app.delete("/projects/{project_id}")
 def delete_project(project_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("DELETE FROM projects WHERE id = %s RETURNING id",(project_id,))
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
 
+        if not deleted:
+            raise HTTPException(status_code=404,detail="Project not found.")
+        return{"message": f"Project {project_id} deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500,detail=f"Error deleting project: {str(e)}")
 # STATIONS ENDPOINTS ________________________________________
 @app.post("/stations", response_model=StationRead)
 def create_station(station: StationCreate, db=Depends(get_db)):
@@ -411,7 +620,7 @@ def update_metrics(metrics_id: int, metrics: ProjectMetricsUpdate, db=Depends(ge
 def delete_metrics(metrics_id: int, db=Depends(get_db)):
     ...
 
-
+# func to shift dates
 
 
 #Ref:  GET (get info), POST (create new), PUT (change existing), Delete

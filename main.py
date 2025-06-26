@@ -477,6 +477,22 @@ def get_all_projects(db=Depends(get_db)):
         raise HTTPException(status_code=500,detail=f"Error fetching projects: {str(e)}")
 
 @app.get("/projects/{project_id}", response_model=ProjectRead)
+    """
+    This function retrieves project details from a database based on the project ID provided in the
+    request.
+    
+    :param project_id: The `project_id` parameter in the code snippet represents the unique identifier
+    of the project that is being requested. This endpoint is designed to retrieve project details from
+    the database based on this `project_id` provided in the URL path
+    :type project_id: int
+    :param db: The `db` parameter in your FastAPI endpoint function `get_project` is a dependency that
+    is used to get a database connection. It is defined using the `Depends` function from FastAPI, which
+    allows you to declare dependencies for your endpoint functions
+    :return: The code is defining a GET endpoint `/projects/{project_id}` that retrieves a project from
+    the database based on the `project_id` provided in the URL path parameter. If the project is found
+    in the database, it returns a JSON response containing the project's `id`, `name`, and `description`
+    in the format specified by the `ProjectRead` response model.
+    """
 def get_project(project_id: int, db=Depends(get_db)):
     try:
         cur = db.cursor()
@@ -537,7 +553,11 @@ def delete_project(project_id: int, db=Depends(get_db)):
 # STATIONS ENDPOINTS ________________________________________
 @app.post("/stations", response_model=StationRead)
 def create_station(station: StationCreate, db=Depends(get_db)):
-    ...
+    try: 
+        cur = db.cursor()
+        cur.execute("""INSERT INTO stations (name, description, project_id)""")
+
+    except: 
 
 @app.get("/stations", response_model=List[StationRead])
 def get_all_stations(db=Depends(get_db)):

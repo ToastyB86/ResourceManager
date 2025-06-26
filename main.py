@@ -1,13 +1,19 @@
 #import uvicorn as uv
 from fastapi.middleware.cors import CORSMiddleware #cross origin research sharing (CORS)
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from typing import List, Optional, Literal, Annotated
 from enum import IntEnum 
-from datetime import date
+from datetime import date, timedelta
 from pydantic import BaseModel, Field #for documentation
 import psycopg2 as psy
 from psycopg2 import sql
 from fastapi import Query
+from dateutil.rrule import rrule, DAILY, MO, TU, WE, TH, FR
+from psycopg2.pool import SimpleConnectionPool
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+import os
 
 db_connect_info = ["Resource Manager","postgres","localhost","1223","5432"]
 # Note the index of db_connect_info. From 0 -> 4
@@ -207,7 +213,7 @@ def create_employee(employee: EmployeeCreate, db=Depends(get_db)):
       cur.close()
       return {
           "id": new_employee[0],
-          "firstname": new_employee[2],
+          "firstname": new_employee[1],
           "lastname": new_employee[2]
       }
   except Exception as e: 
@@ -496,7 +502,7 @@ def get_all_projects(db=Depends(get_db)):
 def get_project(project_id: int, db=Depends(get_db)):
     try:
         cur = db.cursor()
-        cur.execute("""SELECT id, name, description FROM projects WHERE id = %s""",(project_id))
+        cur.execute("""SELECT id, name, description FROM projects WHERE id = %s""",(project_id,))
         row = cur.fetchone()
         cur.close()
         if not row:
@@ -553,92 +559,612 @@ def delete_project(project_id: int, db=Depends(get_db)):
 # STATIONS ENDPOINTS ________________________________________
 @app.post("/stations", response_model=StationRead)
 def create_station(station: StationCreate, db=Depends(get_db)):
-    try: 
+    try:
         cur = db.cursor()
-        cur.execute("""INSERT INTO stations (name, description, project_id)""")
-
-    except: 
+        cur.execute(
+            """
+            INSERT INTO stations (name, description, project_id)
+            VALUES (%s, %s, %s)
+            RETURNING id, name, description, project_id
+            """,
+            (station.name, station.description, station.project_id)
+        )
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        return {"id": row[0], "name": row[1], "description": row[2], "project_id": row[3]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating station: {e}")
 
 @app.get("/stations", response_model=List[StationRead])
 def get_all_stations(db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT id, name, description, project_id FROM stations")
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {"id": r[0], "name": r[1], "description": r[2], "project_id": r[3]}
+            for r in rows
+        ]
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching stations: {e}")
 
 @app.get("/stations/{station_id}", response_model=StationRead)
 def get_station(station_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SELECT id, name, description, project_id FROM stations WHERE id = %s",
+            (station_id,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Station not found.")
+        return {"id": row[0], "name": row[1], "description": row[2], "project_id": row[3]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching station: {e}")
 
 @app.put("/stations/{station_id}", response_model=StationRead)
 def update_station(station_id: int, station: StationUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields, values = [], []
+        if station.name is not None:
+            fields.append("name = %s"); values.append(station.name)
+        if station.description is not None:
+            fields.append("description = %s"); values.append(station.description)
+        if station.project_id is not None:
+            fields.append("project_id = %s"); values.append(station.project_id)
+        if not fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+        values.append(station_id)
+        query = f"UPDATE stations SET {', '.join(fields)} WHERE id = %s RETURNING id, name, description, project_id"
+        cur.execute(query, tuple(values))
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Station not found.")
+        return {"id": row[0], "name": row[1], "description": row[2], "project_id": row[3]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating station: {e}")
 
 @app.delete("/stations/{station_id}")
 def delete_station(station_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("DELETE FROM stations WHERE id = %s RETURNING id", (station_id,))
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Station not found.")
+        return {"message": f"Station {station_id} deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting station: {e}")
+
 
 # EMPLOYEE_PROJECT_ZONE ENDPOINTS _____________________________
 @app.post("/assignments", response_model=EmployeeProjectZoneRead)
 def create_assignment(assignment: EmployeeProjectZoneCreate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            """
+            INSERT INTO employee_project_zone (employee_id, project_id, zone_id, station_id)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, employee_id, project_id, zone_id, station_id
+            """,
+            (assignment.employee_id, assignment.project_id, assignment.zone_id, assignment.station_id)
+        )
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        return {
+            "id": row[0],
+            "employee_id": row[1],
+            "project_id": row[2],
+            "zone_id": row[3],
+            "station_id": row[4]
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating assignment: {e}")
 
 @app.get("/assignments", response_model=List[EmployeeProjectZoneRead])
 def get_all_assignments(db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT id, employee_id, project_id, zone_id, station_id FROM employee_project_zone")
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {"id": r[0], "employee_id": r[1], "project_id": r[2], "zone_id": r[3], "station_id": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching assignments: {e}")
 
 @app.get("/assignments/{assignment_id}", response_model=EmployeeProjectZoneRead)
 def get_assignment(assignment_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SELECT id, employee_id, project_id, zone_id, station_id FROM employee_project_zone WHERE id = %s",
+            (assignment_id,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Assignment not found.")
+        return {"id": row[0], "employee_id": row[1], "project_id": row[2], "zone_id": row[3], "station_id": row[4]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching assignment: {e}")
 
 @app.put("/assignments/{assignment_id}", response_model=EmployeeProjectZoneRead)
 def update_assignment(assignment_id: int, assignment: EmployeeProjectZoneUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields, values = [], []
+        if assignment.employee_id is not None:
+            fields.append("employee_id = %s"); values.append(assignment.employee_id)
+        if assignment.project_id is not None:
+            fields.append("project_id = %s"); values.append(assignment.project_id)
+        if assignment.zone_id is not None:
+            fields.append("zone_id = %s"); values.append(assignment.zone_id)
+        if assignment.station_id is not None:
+            fields.append("station_id = %s"); values.append(assignment.station_id)
+        if not fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+        values.append(assignment_id)
+        query = f"""
+            UPDATE employee_project_zone
+            SET {', '.join(fields)}
+            WHERE id = %s
+            RETURNING id, employee_id, project_id, zone_id, station_id
+        """
+        cur.execute(query, tuple(values))
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Assignment not found.")
+        return {"id": row[0], "employee_id": row[1], "project_id": row[2], "zone_id": row[3], "station_id": row[4]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating assignment: {e}")
 
 @app.delete("/assignments/{assignment_id}")
 def delete_assignment(assignment_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "DELETE FROM employee_project_zone WHERE id = %s RETURNING id",
+            (assignment_id,)
+        )
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Assignment not found.")
+        return {"message": f"Assignment {assignment_id} deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting assignment: {e}")
+
 
 # HOURS LOGGED ENDPOINTS _______________________________________
 @app.post("/hours", response_model=HoursLoggedRead)
 def log_hours(entry: HoursLoggedCreate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            """
+            INSERT INTO hours_logged (employee_project_zone_id, date, phase, hours_worked)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, employee_project_zone_id, date, phase, hours_worked
+            """,
+            (entry.employee_project_zone_id, entry.date, entry.phase, entry.hours_worked)
+        )
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        return {
+            "id": row[0],
+            "employee_project_zone_id": row[1],
+            "date": row[2],
+            "phase": row[3],
+            "hours_worked": row[4]
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error logging hours: {e}")
 
 @app.get("/hours", response_model=List[HoursLoggedRead])
 def get_all_hours(db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("SELECT id, employee_project_zone_id, date, phase, hours_worked FROM hours_logged")
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {"id": r[0], "employee_project_zone_id": r[1], "date": r[2], "phase": r[3], "hours_worked": r[4]}
+            for r in rows
+        ]
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching hours: {e}")
 
 @app.get("/hours/{entry_id}", response_model=HoursLoggedRead)
 def get_hours_entry(entry_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SELECT id, employee_project_zone_id, date, phase, hours_worked FROM hours_logged WHERE id = %s",
+            (entry_id,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Hours entry not found.")
+        return {"id": row[0], "employee_project_zone_id": row[1], "date": row[2], "phase": row[3], "hours_worked": row[4]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching hours entry: {e}")
 
 @app.put("/hours/{entry_id}", response_model=HoursLoggedRead)
 def update_hours_entry(entry_id: int, entry: HoursLoggedUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields, values = [], []
+        if entry.date is not None:
+            fields.append("date = %s"); values.append(entry.date)
+        if entry.phase is not None:
+            fields.append("phase = %s"); values.append(entry.phase)
+        if entry.hours_worked is not None:
+            fields.append("hours_worked = %s"); values.append(entry.hours_worked)
+        if not fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+        values.append(entry_id)
+        query = f"""
+            UPDATE hours_logged
+            SET {', '.join(fields)}
+            WHERE id = %s
+            RETURNING id, employee_project_zone_id, date, phase, hours_worked
+        """
+        cur.execute(query, tuple(values))
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Hours entry not found.")
+        return {"id": row[0], "employee_project_zone_id": row[1], "date": row[2], "phase": row[3], "hours_worked": row[4]}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating hours entry: {e}")
 
 @app.delete("/hours/{entry_id}")
 def delete_hours_entry(entry_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("DELETE FROM hours_logged WHERE id = %s RETURNING id", (entry_id,))
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Hours entry not found.")
+        return {"message": f"Hours entry {entry_id} deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting hours entry: {e}")
+
 
 # METRICS ENDPOINTS ____________________________________________
-
-
 @app.post("/metrics", response_model=ProjectMetricsRead)
 def create_metrics(metrics: ProjectMetricsCreate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            """
+            INSERT INTO project_metrics (project_id, planned_hours, estimated_completion_date, actual_hours_logged)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, project_id, planned_hours, estimated_completion_date, actual_hours_logged
+            """,
+            (metrics.project_id, metrics.planned_hours, metrics.estimated_completion_date, metrics.actual_hours_logged)
+        )
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "planned_hours": row[2],
+            "estimated_completion_date": row[3],
+            "actual_hours_logged": row[4]
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating metrics: {e}")
 
 @app.get("/metrics", response_model=List[ProjectMetricsRead])
 def get_all_metrics(db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SELECT id, project_id, planned_hours, estimated_completion_date, actual_hours_logged FROM project_metrics"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [
+            {
+                "id": r[0],
+                "project_id": r[1],
+                "planned_hours": r[2],
+                "estimated_completion_date": r[3],
+                "actual_hours_logged": r[4]
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching metrics: {e}")
 
 @app.get("/metrics/{metrics_id}", response_model=ProjectMetricsRead)
 def get_metrics(metrics_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SELECT id, project_id, planned_hours, estimated_completion_date, actual_hours_logged FROM project_metrics WHERE id = %s",
+            (metrics_id,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Metrics not found.")
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "planned_hours": row[2],
+            "estimated_completion_date": row[3],
+            "actual_hours_logged": row[4]
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error fetching metrics: {e}")
 
 @app.put("/metrics/{metrics_id}", response_model=ProjectMetricsRead)
 def update_metrics(metrics_id: int, metrics: ProjectMetricsUpdate, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        fields, values = [], []
+        if metrics.planned_hours is not None:
+            fields.append("planned_hours = %s"); values.append(metrics.planned_hours)
+        if metrics.estimated_completion_date is not None:
+            fields.append("estimated_completion_date = %s"); values.append(metrics.estimated_completion_date)
+        if metrics.actual_hours_logged is not None:
+            fields.append("actual_hours_logged = %s"); values.append(metrics.actual_hours_logged)
+        if not fields:
+            raise HTTPException(status_code=400, detail="No fields to update.")
+        values.append(metrics_id)
+        query = f"""
+            UPDATE project_metrics
+            SET {', '.join(fields)}
+            WHERE id = %s
+            RETURNING id, project_id, planned_hours, estimated_completion_date, actual_hours_logged
+        """
+        cur.execute(query, tuple(values))
+        row = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not row:
+            raise HTTPException(status_code=404, detail="Metrics not found.")
+        return {
+            "id": row[0],
+            "project_id": row[1],
+            "planned_hours": row[2],
+            "estimated_completion_date": row[3],
+            "actual_hours_logged": row[4]
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating metrics: {e}")
 
 @app.delete("/metrics/{metrics_id}")
 def delete_metrics(metrics_id: int, db=Depends(get_db)):
-    ...
+    try:
+        cur = db.cursor()
+        cur.execute("DELETE FROM project_metrics WHERE id = %s RETURNING id", (metrics_id,))
+        deleted = cur.fetchone()
+        db.commit()
+        cur.close()
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Metrics not found.")
+        return {"message": f"Metrics {metrics_id} deleted successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting metrics: {e}")
+
+
+# Utility functions for date calculations
+
+WORKDAY_HOURS = 9
+def business_days_between(start: date, end: date):
+    return list(rrule(DAILY, dtstart=start, until=end,
+                      byweekday=(MO, TU, WE, TH, FR)))
+
+def add_business_days(start: date, num_days: int):
+    days = 0
+    current = start
+    while days < num_days:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            days += 1
+    return current
+
+
+@app.post("/hours/bulk")
+def bulk_log_hours(
+    assignment_id: int,
+    start_date: date,
+    end_date: date,
+    hours_per_day: float,
+    db=Depends(get_db)
+):
+    """
+    Creates one HoursLogged entry per business day in [start_date, end_date],
+    each with `hours_per_day`, and then updates the ProjectMetrics.actual_hours_logged.
+    """
+    try:
+        cur = db.cursor()
+        dates = business_days_between(start_date, end_date)
+
+        # 1) Insert all the days in one go
+        args_str = ",".join(
+            cur.mogrify("(%s,%s,%s,%s)", (assignment_id, d, "WORK", hours_per_day)).decode()
+            for d in dates
+        )
+        cur.execute(
+            "INSERT INTO hours_logged (employee_project_zone_id, date, phase, hours_worked) VALUES "
+            + args_str
+        )
+
+        # 2) Sum actual hours by project and update project_metrics
+        cur.execute("""
+            UPDATE project_metrics pm
+            SET actual_hours_logged = sub.total
+            FROM (
+                SELECT epz.project_id, SUM(h.hours_worked) AS total
+                  FROM hours_logged h
+                  JOIN employee_project_zone epz
+                    ON h.employee_project_zone_id = epz.id
+                 WHERE epz.id = %s
+                 GROUP BY epz.project_id
+            ) AS sub
+           WHERE pm.project_id = sub.project_id
+        """, (assignment_id,))
+
+        db.commit()
+        cur.close()
+        return {"logged_days": len(dates), "hours_per_day": hours_per_day}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Bulk log failed: {e}")
+
+
+
+@app.patch("/projects/{project_id}/shift")
+def shift_project_dates(
+    project_id: int,
+    days: int,  # positive or negative
+    db=Depends(get_db)
+):
+    """
+    Adds `days` to project start/end dates, shifts all its hours_logged entries
+    by the same amount (within the original date span), and recomputes estimated_completion_date
+    based on planned_hours.
+    """
+    try:
+        cur = db.cursor()
+
+        # 1) Shift the project's own dates
+        cur.execute("""
+            UPDATE projects
+               SET start_date = start_date + interval '%s day',
+                   end_date   = end_date   + interval '%s day'
+             WHERE id = %s
+             RETURNING start_date, end_date
+        """, (days, days, project_id))
+        proj = cur.fetchone()
+        if not proj:
+            raise HTTPException(404, "Project not found.")
+
+        orig_start, orig_end = proj
+
+        # 2) Shift hours_logged dates that fall in the original window
+        cur.execute("""
+            UPDATE hours_logged h
+            SET date = date + interval '%s day'
+            FROM employee_project_zone epz
+            WHERE h.employee_project_zone_id = epz.id
+              AND epz.project_id = %s
+              AND h.date BETWEEN %s AND %s
+        """, (days, project_id, orig_start, orig_end))
+
+        # 3) Recompute estimated_completion_date in project_metrics
+        #    as start_date + N business days, where N = ceil(planned_hours / WORKDAY_HOURS)
+        cur.execute("""
+            SELECT planned_hours, pm.id
+              FROM project_metrics pm
+             WHERE pm.project_id = %s
+        """, (project_id,))
+        planned, metrics_id = cur.fetchone()
+        needed_days = -(-planned // WORKDAY_HOURS)  # ceil
+        new_est = add_business_days(proj[0], int(needed_days) - 1)
+
+        cur.execute("""
+            UPDATE project_metrics
+               SET estimated_completion_date = %s
+             WHERE id = %s
+        """, (new_est, metrics_id))
+
+        db.commit()
+        cur.close()
+        return {
+            "new_start": proj[0],
+            "new_end": proj[1],
+            "new_estimated_completion": new_est
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"Shift failed: {e}")
+
+import io
+import pandas as pd
+from fastapi.responses import StreamingResponse
+
+@app.get("/export/{table_name}")
+def export_table(table_name: str, db=Depends(get_db)):
+    # 1) Query the full table
+    df = pd.read_sql(f"SELECT * FROM {table_name}", db)
+
+    # 2) Write to an in-memory Excel workbook
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name=table_name, index=False)
+
+    # 3) Rewind and send as a download
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={table_name}.xlsx"},
+    )
+    
+    
+    @app.get("/export/all")
+def export_all(db=Depends(get_db)):
+    tables = ["employee", "zones", "projects", "stations"]
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        for tbl in tables:
+            df = pd.read_sql(f"SELECT * FROM {tbl}", db)
+            df.to_excel(writer, sheet_name=tbl, index=False)
+    output.seek(0)
+    return StreamingResponse(…)
+
+
+
 
 # func to shift dates
 

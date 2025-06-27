@@ -1,68 +1,373 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
+// File: src/index.css
 body {
   margin: 0;
+  font-family: Arial, sans-serif;
+  background-color: #f5f7fa;
+  color: #333;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.navbar {
   display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  background-color: #ffffff;
+  padding: 10px 20px;
+  border-bottom: 1px solid #e0e0e0;
+  align-items: center;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+.nav-link {
+  margin-right: 20px;
+  text-decoration: none;
+  color: #333;
   font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  padding: 8px 12px;
+  border-radius: 4px;
+  transition: background-color 0.2s, opacity 0.2s;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+.nav-link:hover {
+  background-color: #e0e0e0;
+  opacity: 0.8;
+}
+
+.btn {
+  display: inline-block;
+  padding: 10px 16px;
+  margin-top: 10px;
+  background-color: #4a90e2;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: opacity 0.2s;
+}
+
+.btn:hover {
+  opacity: 0.8;
+}
+
+.btn:active {
+  opacity: 0.6;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+.table th,
+.table td {
+  padding: 12px;
+  border: 1px solid #ddd;
+  text-align: left;
+}
+
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: #4a90e2;
+  outline: none;
+}
+
+.gantt {
+  margin-top: 20px;
+  overflow-x: auto;
+}
+
+.gantt-chart {
+  display: flex;
+  align-items: flex-start;
+}
+
+.gantt-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.gantt-label {
+  width: 150px;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.gantt-bar {
+  height: 20px;
+  border-radius: 4px;
+  background-color: #4a90e2;
+  transition: opacity 0.2s;
+}
+
+.gantt-bar:hover {
+  opacity: 0.8;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .navbar {
+    flex-direction: column;
+    align-items: flex-start;
   }
-  a:hover {
-    color: #747bff;
+  .nav-link {
+    margin: 5px 0;
   }
-  button {
-    background-color: #f9f9f9;
-  }
+}
+
+
+// File: src/App.jsx
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import NavBar from './components/NavBar';
+import EmployeeList from './components/EmployeeList';
+import EmployeeForm from './components/EmployeeForm';
+import HoursLog from './components/HoursLog';
+import GanttChart from './components/GanttChart';
+import './index.css';
+
+export default function App() {
+  return (
+    <Router>
+      <NavBar />
+      <div className="container">
+        <Routes>
+          <Route path="/" element={<EmployeeList />} />
+          <Route path="/add-employee" element={<EmployeeForm />} />
+          <Route path="/log-hours" element={<HoursLog />} />
+          <Route path="/gantt" element={<GanttChart />} />
+        </Routes>
+      </div>
+    </Router>
+  );
+}
+
+// File: src/components/NavBar.jsx
+import React from 'react';
+import { NavLink } from 'react-router-dom';
+
+export default function NavBar() {
+  return (
+    <nav className="navbar">
+      <NavLink to="/" className="nav-link">View Employees</NavLink>
+      <NavLink to="/add-employee" className="nav-link">Add Employee</NavLink>
+      <NavLink to="/log-hours" className="nav-link">Log Hours</nDiv>
+      <NavLink to="/gantt" className="nav-link">Gantt View</NavLink>
+    </nav>
+  );
+}
+
+// File: src/components/EmployeeList.jsx
+import React, { useEffect, useState } from 'react';
+
+export default function EmployeeList() {
+  const [employees, setEmployees] = useState([]);
+
+  useEffect(() => {
+    fetch('http://localhost:8000/employees')
+      .then(res => res.json())
+      .then(data => setEmployees(data))
+      .catch(console.error);
+  }, []);
+
+  return (
+    <div>
+      <h2>Employees</h2>
+      <table className="table">
+        <thead>
+          <tr><th>ID</th><th>First</th><th>Last</th></tr>
+        </thead>
+        <tbody>
+          {employees.map(emp => (
+            <tr key={emp.id}>
+              <td>{emp.id}</td>
+              <td>{emp.firstname}</td>
+              <td>{emp.lastname}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// File: src/components/EmployeeForm.jsx
+import React, { useState, useEffect } from 'react';
+
+export default function EmployeeForm() {
+  const [first, setFirst] = useState('');
+  const [last, setLast] = useState('');
+  const [projects, setProjects] = useState([]);
+  const [zones, setZones] = useState([]);
+  const [stations, setStations] = useState([]);
+  const [assignment, setAssignment] = useState({});
+
+  useEffect(() => {
+    fetch('http://localhost:8000/projects').then(r => r.json()).then(setProjects);
+    fetch('http://localhost:8000/zones').then(r => r.json()).then(setZones);
+    fetch('http://localhost:8000/stations').then(r => r.json()).then(setStations);
+  }, []);
+
+  const handleSubmit = () => {
+    // create employee then assignment
+    fetch('http://localhost:8000/employees', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({firstname:first, lastname:last})
+    })
+      .then(res => res.json())
+      .then(emp => fetch('http://localhost:8000/assignments',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          employee_id: emp.id,
+          project_id: assignment.project_id,
+          zone_id: assignment.zone_id,
+          station_id: assignment.station_id
+        })
+      }))
+      .then(() => alert('Created!'))
+      .catch(console.error);
+  };
+
+  return (
+    <div>
+      <h2>Add Employee & Assignment</h2>
+      <div className="form-group">
+        <label>First Name</label>
+        <input value={first} onChange={e=>setFirst(e.target.value)} />
+      </div>
+      <div className="form-group">
+        <label>Last Name</label>
+        <input value={last} onChange={e=>setLast(e.target.value)} />
+      </div>
+      <div className="form-group">
+        <label>Project</label>
+        <select onChange={e=>setAssignment(a=>({...a,project_id: +e.target.value}))}>
+          <option value="">Select...</option>
+          {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Zone</label>
+        <select onChange={e=>setAssignment(a=>({...a,zone_id: +e.target.value}))}>
+          <option value="">Select...</option>
+          {zones.map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Station</label>
+        <select onChange={e=>setAssignment(a=>({...a,station_id: +e.target.value}))}>
+          <option value="">Select...</option>
+          {stations.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </div>
+      <button className="btn" onClick={handleSubmit}>Create</button>
+    </div>
+  );
+}
+
+// File: src/components/HoursLog.jsx
+import React, { useState, useEffect } from 'react';
+
+export default function HoursLog() {
+  const [assignments, setAsgn] = useState([]);
+  const [entry, setEntry] = useState({});
+
+  useEffect(()=>{
+    fetch('http://localhost:8000/assignments').then(r=>r.json()).then(setAsgn);
+  },[]);
+
+  const log = () => fetch('http://localhost:8000/hours',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(entry)
+  }).then(()=>alert('Logged'));
+
+  return (
+    <div>
+      <h2>Log Hours</nDiv>
+      <div className="form-group">
+        <label>Assignment</label>
+        <select onChange={e=>setEntry({...entry, employee_project_zone_id:+e.target.value})}>
+          <option value="">Select...</option>
+          {assignments.map(a=><option key={a.id} value={a.id}>{`#${a.id}`}</option>)}
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Date</label>
+        <input type="date" onChange={e=>setEntry({...entry,date:e.target.value})}/>
+      </div>
+      <div className="form-group">
+        <label>Phase</label>
+        <select onChange={e=>setEntry({...entry,phase:e.target.value})}>
+          <option>SIM</option><option>SOFTWARE</option><option>DEBUG</option><option>INS</option><option>TRV</option>
+        </select>
+      </div>
+      <div className="form-group">
+        <label>Hours Worked</label>
+        <input type="number" step="0.1" onChange={e=>setEntry({...entry,hours_worked:+e.target.value})}/>
+      </div>
+      <button className="btn" onClick={log}>Log</button>
+    </div>
+  );
+}
+
+// File: src/components/GanttChart.jsx
+import React, { useEffect, useState } from 'react';
+
+export default function GanttChart() {
+  const [projects, setProjects] = useState([]);
+
+  useEffect(()=>{
+    fetch('http://localhost:8000/projects').then(r=>r.json()).then(setProjects);
+  },[]);
+
+  const calcWidth = (start, end) => {
+    const s = new Date(start);
+    const e = new Date(end);
+    const days = (e - s) / (1000 * 60 * 60 * 24);
+    return Math.max(days * 10, 20);
+  };
+
+  return (
+    <div>
+      <h2>Gantt View</nDiv>
+      <div className="gantt">
+        {projects.map(p => (
+          <div className="gantt-row" key={p.id}>
+            <div className="gantt-label">{p.name}</div>
+            <div
+              className="gantt-bar"
+              style={{ width: calcWidth(p.start_date, p.end_date) }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
